@@ -1,0 +1,21 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
+
+# Environment variables / secrets
+.env
+
+# IDE
+.vscode/
+
+# Test/cache files
+.pytest_cache/
+
+# Qdrant/local runtime data
+*.log

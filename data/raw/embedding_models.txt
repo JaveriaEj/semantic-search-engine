@@ -1,0 +1,352 @@
+Choosing an Embedding Model
+Jump to section
+MTEB Leaderboards
+Downloading test data
+Most of us are using OpenAI's Ada 002 for text embeddings. The reason for that is OpenAl built a good embedding model that was easy to use long before anyone else. However, this was a long time ago. One look at the MTEB leaderboards tells us that Ada is far from the best option for embedding text.
+So, what is the best
+embedding model
+? It depends on your data, whether you need to optimize for accuracy or latency, and more — as we'll see in this article.
+You may also be asking what
+exactly
+is an embedding model? If you're here, you're likely aware that it is a key component in
+R
+etrieval
+A
+ugmented
+G
+eneration (RAG).
+An embedding model identifies relevant information when given a user's query. These models can do this by looking at the "human meaning" behind a query and matching that to the "meaning" of a broader set of documents, webpages, videos, or other sources of information.
+Embedding models translate human-readable text into machine-readable and searchable vectors.
+Nowadays, many propriety embedding models far outperform Ada, and there are even tiny open-source models with comparable performance, such as E5.
+In this article, we will explore two models - the open-source E5 and Cohere's embed v3 models - and see how they compare to the incumbent Ada 002.
+Watch "
+Youtube Video Player
+" on YouTube
+Watch
+Video walkthrough of this chapter
+Source:
+YouTube
+MTEB Leaderboards
+The most popular place for finding the latest performance benchmarks for text embedding models is the
+MTEB leaderboards hosted by Hugging Face
+. MTEB is a great place to start but does require some caution and skepticism - the results are self-reported, and unfortunately, many results prove inaccurate when attempting to use the models on real-world data.
+Many of these models (typically the open-source ones) seem to have been fine-tuned on the MTEB benchmarks, producing inflated performance numbers. Nonetheless, the reported performance of some open-source models — such as E5 — is accurate.
+There are many fields in MTEB that we can mostly ignore. The fields that matter most for those of us using these models in the real world are:
+Score
+: the score we should focus on is "average" and "retrieval average". Both are highly correlated, so focusing on either works.
+Sequence length
+tells us how many tokens a model can consume and compress into a single embedding. Generally speaking, we wouldn't recommend stuffing more than a paragraph of heft into a single embedding - so models supporting up to 512 tokens are usually more than enough.
+Model size
+: the size of a model indicates how easy it will be to run. All models near the top of MTEB are reasonably sized. One of the largest is instructor-xl (requiring 4.96GB of memory), which we can easily run on consumer hardware.
+Focusing on these columns gives us all the information we need to choose models that will likely fit our needs. With this in mind, we choose three models to feature in this article — two proprietary models, Ada 002 and
+embed-english-v3.0
+— and one tiny but performant open-source model;
+e5-base-v2
+.
+Downloading test data
+To perform our comparison, we need a dataset. We will use the prechunked AI ArXiv dataset from HuggingFace datasets.
+!pip install -qU datasets==2.14.6
+from datasets import load_dataset
+data = load_dataset(
+"jamescalam/ai-arxiv-chunked",
+split= "train"
+)
+This dataset gives us ~42K text chunks to embed, each roughly a paragraph or two.
+Prerequisites
+The prerequisites for each model varies slightly. OpenAI and Cohere store the two propriety models behind APIs, so their client libraries are very lightweight, and all we need is to install those and grab their respective API keys.
+!pip install -qU \
+cohere==4.34 \
+openai==1.2.2
+import os
+import cohere
+import openai
+# initialize cohere
+os.environ["COHERE_API_KEY"] = "your cohere api key"
+co = cohere.Client()
+# openai doesn't need to be initialized, but need to set api key
+os.environ["OPENAI_API_KEY"] = "your openai api key"
+E5 is a local model, and we need a little more code and installs to run it — including fairly heavy libraries like PyTorch. The model is comparatively lightweight, so we don't need heavy GPU instances or a ton of run memory. However ideally, we do want
+at least
+a GPU to run it on for faster performance, but this isn't a strict requirement, and we can manage with CPU only.
+!pip install -qU \
+torch==2.1.2 \
+transformers==4.25.0
+import torch
+from transformers import AutoModel, AutoTokenizer
+# use GPU if available, on mac can use MPS
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model_id = "intfloat/e5-base-v2"
+# initialize tokenizer and model
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+model = AutoModel.from_pretrained(model_id).to(device)
+model.eval()
+Two approaches to embedding data
+To create our embeddings, we will create an
+embed
+function for each model. We'll pass a list of strings into these embed functions and expect to return a list of
+vector embeddings
+.
+Embedding via hosted models
+Naturally, the code for our proprietary embedding models is more straightforward, so let's cover those two first:
+# cohere embedding function
+def embed(docs: list[str]) -> list[list[float]]:
+doc_embeds = co.embed(
+docs,
+input_type="search_document",
+model="embed-english-v3.0"
+)
+return doc_embeds.embeddings
+# openai embedding function
+def embed(docs: list[str]) -> list[list[float]]:
+res = openai.embeddings.create(
+input=docs,
+model="text-embedding-ada-002"
+)
+doc_embeds = [r.embedding for r in res.data]
+return doc_embeds
+With Cohere and OpenAI, we're making a simple API call. There's little to note here
+other
+than the
+input_type
+parameter for the Cohere API. The
+input_type
+defines whether the current inputs are
+document vectors
+or
+query vectors
+. We define this to support improved performance for asymmetric semantic search — where we are querying with a smaller chunk of text (i.e., a search query) and attempting to retrieve larger chunks (i.e., a couple of sentences or paragraphs).
+Embedding via local models
+E5 works similarly to the Cohere embedding model with support for asymmetric search. However, the implementation is slightly different. Rather than specifying whether an input is a query or document via a parameter, we prefix that information to the input text. For query, we prefix
+"query:"
+, and for documents, we prefix
+"passage:"
+(another name for documents).
+def embed(docs: list[str]) -> list[list[float]]:
+docs = [f"passage: {d}" for d in docs]
+# tokenize
+tokens = tokenizer(
+docs, padding=True, max_length=512, truncation=True, return_tensors="pt"
+).to(device)
+with torch.no_grad():
+# process with model for token-level embeddings
+out = model(**tokens)
+# mask padding tokens
+last_hidden = out.last_hidden_state.masked_fill(
+~tokens["attention_mask"][..., None].bool(), 0.0
+)
+# create mean pooled embeddings
+doc_embeds = last_hidden.sum(dim=1) / \
+tokens["attention_mask"].sum(dim=1)[..., None]
+return doc_embeds.cpu().numpy()
+After specifying that these chunks are documents, we tokenize them to give us the
+tokens
+parameter. Every transformer-based model requires a tokenization step. Tokenization is where we translate human-readable plain text into transformer-readable inputs, which is simply a list of integers like
+[0, 531, 81, 944, ...]
+, where each integer represents a word or sub-word.
+Once we have our
+tokens
+we feed them into our model with
+model(**tokens)
+. From this, we get our output logits (i.e., predictions) in the
+out
+parameter.
+Some of our input
+tokens
+are
+padding tokens
+. These are used as placeholders to align the dimensions of the arrays/tensors that we feed through each model layer. By default, we ignore the output logits produced by these tokens, but in some cases (e.g., with embedding models), we must calculate an average value across
+all
+output logits. If we were to consider the output logits produced by the padding tokens in this calculation, we would degrade embedding quality.
+To avoid degradation of embedding quality, we must
+mask
+(i.e., hide by setting to
+None
+) the output logits produced by padding tokens. That is what the
+out.last_hidden_state.masked_fill
+line is doing.
+Finally, we're ready to calculate our single vector embedding — which we do so by
+mean pooling
+. Mean pooling means taking the average values from all of our output logit vectors to produce a single vector, which we store in the
+doc_embeds
+parameter.
+From there, we return our
+doc_embeds
+after moving it from GPU to CPU (if we used a GPU) with
+.cpu()
+and transforming the PyTorch tensor of
+doc_embeds
+into a Numpy array with
+.numpy()
+.
+Generating the embeddings
+We can create our vector index with the same logic once we have defined our chosen
+embed
+function. We define a
+batch_size
+and iterate through our dataset to create the embeddings and add them to an array:
+from tqdm.auto import tqdm
+import numpy as np
+chunks = data["chunk"]
+batch_size = 256
+for i in tqdm(range(0, len(chunks), batch_size)):
+i_end = min(len(chunks), i+batch_size)
+chunk_batch = chunks[i:i_end]
+# embed current batch
+embed_batch = embed(chunk_batch)
+# add to existing np array if exists (otherwise create)
+if i == 0:
+arr = embed_batch.copy()
+else:
+arr = np.concatenate([arr, embed_batch.copy()])
+Once every chunk is embedded into
+arr
+, that array becomes the input you'd hand to an indexing structure like Pinecone.
+Now, we can measure two metrics — embedding latency and vector dimensionality. Running all of these on Google Colab, we see the time taken to embed the entire dataset for each model is:
+Model
+Batch size
+Time taken
+Vector dim
+embed-english-v3.0
+128
+05:32
+1024
+text-embedding-ada-002
+128
+09:07
+1536
+intfloat/e5-base-v2
+256
+03:53
+768
+Ada 002 is the slowest method here. E5 was the fastest, _but_ was run on a V100 GPU instance in Google Colab — the API models don't require us to run our code on GPU instances. Another consideration is storage requirements. Higher dimensional vectors cost more to store, and these costs can build up over time.
+Performance
+When testing these models, we will see relatively similar results. We're using a messy dataset, which is more challenging _but_ also more realistic.
+Q1: Why should I use Llama 2?
+Note: we have paraphrased the results below for brevity. See the original notebooks for full results and code [
+Ada 002
+,
+Cohere embed v3
+,
+E5 base v2
+].
+Ada 002
+Embed v3
+E5 base v2
+✅ "Llama 2 is intended for
+commercial and research use in English
+. Tuned models are intended for
+assistant like chat
+, whereas pretrained models can be adapted for a
+variety of natural language generation tasks
+."
+⚪️ "The focus of this work is to train a series of language models that achieve optimal performance at various sizes. The resulting models, called
+LLaMA
+... LLaMA-13B outperforms GPT-3 on most benchmarks, despite being 10x smaller. We believe that this model will help democratize the access and study of LLMs, since it can be run on a single GPU."
+❌ "rflow
+answerability
+classificationtask957
+e2e
+data
+to
+texttask288
+gigaword
+title
+generationtask1728
+web
+nlg
+data
+to
+texttask1358
+xlsum
+title
+generationtask1529
+scitailv1.1_textual..."
+✅ "We develop and release Llama 2, a collection of pretrained and fine-tuned large language models (LLMs) ranging in scale from 7 billion to 70 billion parameters. They are
+optimized for dialogue use cases
+. Our models
+outperform open-source chat models on most benchmarks
+we tested, and based on our human evaluations for helpfulness and safety, may be a suitable
+substitute for closed source models
+."
+✅ "We develop and release Llama 2, a collection of pretrained and fine-tuned large language models (LLMs) ranging in scale from 7 billion to 70 billion parameters. They are
+optimized for dialogue use cases
+. Our models
+outperform open-source chat models on most benchmarks
+we tested, and based on our human evaluations for helpfulness and safety, may be a suitable
+substitute for closed source models
+."
+✅ "We develop and release Llama 2, a collection of pretrained and fine-tuned large language models (LLMs) ranging in scale from 7 billion to 70 billion parameters. They are
+optimized for dialogue use cases
+. Our models
+outperform open-source chat models on most benchmarks
+we tested, and based on our human evaluations for helpfulness and safety, may be a suitable
+substitute for closed source models
+."
+✅ "These closed product LLMs are heavily fine-tuned to align with human preferences, which greatly enhances their usability and safety. We develop and release Llama 2, a family of pretrained and fine-tuned LLMs, at scales up to 70B parameters. On the series of helpfulness and safety benchmarks we tested, Llama 2 models generally
+perform better than existing open-source models
+. They also appear to be
+on par with some of the closed-source models
+."
+✅ "These closed product LLMs are heavily fine-tuned to align with human preferences, which greatly enhances their usability and safety. We develop and release Llama 2, a family of pretrained and fine-tuned LLMs, at scales up to 70B parameters. On the series of helpfulness and safety benchmarks we tested, Llama 2 models generally
+perform better than existing open-source models
+. They also appear to be
+on par with some of the closed-source models
+."
+✅ "These closed product LLMs are heavily fine-tuned to align with human preferences, which greatly enhances their usability and safety. We develop and release Llama 2, a family of pretrained and fine-tuned LLMs, at scales up to 70B parameters. On the series of helpfulness and safety benchmarks we tested, Llama 2 models generally
+perform better than existing open-source models
+. They also appear to be
+on par with some of the closed-source models
+."
+For the first set of results, we get slightly better results from Ada. For that first result, Cohere's model returns a result about the original Llama model (rather than Llama 2), and the E5 model returns some strange malformed text. However, all of the models return the same relevant results in positions two and three.
+Q2: Can you tell me about red teaming for llama 2?
+Ada 002
+Embed v3
+E5 base v2
+⚪️ "Visualization of the red team attacks. Each point corresponds to a red team attack embedded in a two dimensional space using UMAP. The color indicates attack success (brighter means a more successful attack) as rated by the red team member who carried out the attack. We manually annotated attacks and found several clusters of attack types."
+⚪️ "... aiding in disinformation campaigns, generating extremist texts, spreading falsehoods, and more. As AI systems improve, the scope of possible harms seems likely to grow. One potentially useful tool for adressing harm is red teaming. We describe our early efforts to implement red teaming to make our models safer."
+⚪️ "We created this dataset to analyze and address potential harms in LLMs through red teaming. This dataset adds to a limited number of publicly-available red team datasets, and is the only dataset of red team attacks on a language model trained with RLHF as a safety technique."
+⚪️ "Red teaming ChatGPT via Jailbreaking: Observations indicate that LLMs may exhibit social prejudice and toxicity, posing ethical and societal dangers. We perform a qualitative research method called red teaming on OpenAI's ChatGPT."
+⚪️ "A red team exercise is an effort to find flaws and vulnerabilities, often performed by dedicated red teams that seek to adopy an attacker's mindset. In security, red teams are routinely tasked with emulating attackers."
+⚪️ "We conducted interviews with Trust & Safety experts and incorporated their suggested best practices into our experiments to ensure the well-being of the red team. Red team members enjoyed participating in our experiments and felt motivated to make AI systems less harmful.
+⚪️ "In the red team task instructions, we provide clear warnings that red team members may be exposed to sensitive content. Through surveys and feedback, we found that red team members enjoyed the task and did not experience significant negative emotions."
+⚪️ "Red teaming ChatGPT via Jailbreaking: Observations indicate that LLMs may exhibit social prejudice and toxicity, posing ethical and societal dangers. We perform a qualitative research method called red teaming on OpenAI's ChatGPT."
+❌ "果，并解释我所持立场的原因。因此，我致力于提供积极、有趣、实用和吸引人的回 答。我的逻辑和推理力求严密、智能和有理有据。另外，我可以提供更多相关细节来 Seed Prompts for Topic-Guided Red-Teaming Self-Instruct"
+The red teaming question returned the worst results across all models. Despite information about red teaming Llama 2 existing in the dataset,
+none
+of that information was returned. All models did return information about generic red teaming, with Cohere's model returning the most informative results (in the author's opinion). E5 returned what seems to be the poorest result due to the lack of English text — however, it does seem to be related to red teaming, just in the wrong language.
+Q3: What is the difference between gpt-4 and llama?
+Ada 002
+Embed v3
+E5 base v2
+✅ "31.39%LLaMA-GPT4   25.99% Tie   42.61% HonestyAlpaca    25.43%LLaMA-GPT4   16.48% Tie   58.10% Harmlessness(a) LLaMA-GPT4 vs Alpaca ( i.e.,LLaMA-GPT3 )  GPT4    44.11% LLaMA-GPT4   42.78% Tie   13.11% Helpfulness GPT4    37.48% LLaMA-GPT4   37.88% Tie   24.64% Honesty GPT4    35.36% LLaMA-GPT4   31.66% Tie   32.98% Harmlessness (b) LLaMA-GPT4 vs GPT-4"
+✅ "Second, we compare GPT-4-instruction-tuned LLaMA models against the teacher model GPT-4. The observations are quite consistent over the three criteria:
+GPT-4-instruction-tuned LLaMA performs similarly to the original GPT-4
+."
+✅ "LLaMA-GPT4 is a closer proxy to GPT-4 than Alpaca. closely follow the behavior of GPT-4. When the sequence length is short, both
+LLaMA-GPT4 and GPT-4 can generate responses that contains the simple ground truth answers
+, but add extra words to make the response more chat-like."
+✅ "Second, we compare GPT-4-instruction-tuned LLaMA models against the teacher model GPT-4. The observations are quite consistent over the three criteria:
+GPT-4-instruction-tuned LLaMA performs similarly to the original GPT-4
+."
+✅ "Instruction tuning of LLaMA with GPT-4 often achieves higher performance than tuning with text-davinci-003 (i.e. Alpaca) and no tuning (i.e. LLaMA): The
+7B LLaMA GPT4 outperforms the 13B Alpaca and LLaMA
+.
+✅ "We compare LLaMA-GPT4 with GPT-4 and Alpaca unnatural instructions.
+For ROUGE-L scores, Alpaca outperforms the other models
+. We note that
+LLaMA-GPT4 and GPT4 gradually perform better when the ground truth response length increases
+, eventually showing higher performance when the length is longer than 4."
+✅ "We compare LLaMA-GPT4 with GPT-4 and Alpaca unnatural instructions.
+For ROUGE-L scores, Alpaca outperforms the other models
+. We note that
+LLaMA-GPT4 and GPT4 gradually perform better when the ground truth response length increases
+, eventually showing higher performance when the length is longer than 4."
+✅ "LLaMA-GPT4 is a closer proxy to GPT-4 than Alpaca. closely follow the behavior of GPT-4. When the sequence length is short, both
+LLaMA-GPT4 and GPT-4 can generate responses that contains the simple ground truth answers
+, but add extra words to make the response more chat-like."
+✅ "31.39%LLaMA-GPT4   25.99% Tie   42.61% HonestyAlpaca    25.43%LLaMA-GPT4   16.48% Tie   58.10% Harmlessness(a) LLaMA-GPT4 vs Alpaca ( i.e.,LLaMA-GPT3 )  GPT4    44.11% LLaMA-GPT4   42.78% Tie   13.11% Helpfulness GPT4    37.48% LLaMA-GPT4   37.88% Tie   24.64% Honesty GPT4    35.36% LLaMA-GPT4   31.66% Tie   32.98% Harmlessness (b) LLaMA-GPT4 vs GPT-4"
+The results when asking for a comparison between GPT-4 and Llama are good from each model. The primary difference is that Ada 002 and E5 both return a plaintext table response — that is harder for us to read, but most LLMs would likely get some good information from that. Cohere returns a set of three valuable text-only responses.
+Using what we have learned here, we have a good overview of the different types of embedding models and the qualities we might be most interested in when assessing which of those we should use. Naturally, a big part of that assessment should consist of us focusing on evaluation, which we did a little — qualitatively — here.
+New models are being added to the
+MTEB leaderboards
+almost daily — many of those showing promising state-of-the-art results. So, there is no shortage of high-quality embedding models we can use in retrieval.

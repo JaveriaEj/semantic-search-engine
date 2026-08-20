@@ -1,0 +1,42 @@
+[
+  {
+    "query": "How does HNSW make vector search faster?",
+    "relevant_chunks": [
+      "hnsw_0",
+      "hnsw_1",
+      "hnsw_2",
+      "hnsw_4",
+      "hnsw_5"
+    ]
+  },
+  {
+    "query": "What is semantic search?",
+    "relevant_chunks": [
+      "semantic_search_0"
+    ]
+  },
+  {
+    "query": "What is retrieval augmented generation?",
+    "relevant_chunks": [
+      "rag_1",
+      "rag_2",
+      "rag_3"
+    ]
+  },
+  {
+    "query": "How do embedding models convert text into vectors?",
+    "relevant_chunks": [
+      "embedding_models_0",
+      "embedding_models_2",
+      "rag_3"
+    ]
+  },
+  {
+    "query": "What is hybrid search?",
+    "relevant_chunks": [
+      "hybrid_search_0",
+      "hybrid_search_3",
+      "hybrid_search_4"
+    ]
+  }
+]
