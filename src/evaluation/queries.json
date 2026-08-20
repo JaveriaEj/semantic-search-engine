@@ -39,5 +39,42 @@
       "hybrid_search_3",
       "hybrid_search_4"
     ]
+  },
+  {
+    "query": "What is a vector database?",
+    "relevant_chunks": [
+      "vector_database_0"
+    ]
+  },
+  {
+    "query": "What is reranking in information retrieval?",
+    "relevant_chunks": [
+      "reranking_0"
+    ]
+  },
+  {
+    "query": "What is vector similarity?",
+    "relevant_chunks": [
+      "vector_similarity_0",
+      "vector_similarity_2",
+      "vector_similarity_3"
+    ]
+  },
+  {
+    "query": "What is cosine similarity used for in vector search?",
+    "relevant_chunks": [
+      "vector_similarity_0",
+      "vector_similarity_2",
+      "vector_similarity_3"
+    ]
+  },
+  {
+    "query": "How does HNSW navigate vectors to find similar results?",
+    "relevant_chunks": [
+      "hnsw_0",
+      "hnsw_1",
+      "hnsw_2",
+      "vector_database_6"
+    ]
   }
 ]
