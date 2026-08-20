@@ -1,0 +1,205 @@
+←
+Learn
+Unlock High-Precision Keyword Search with pinecone-sparse-english-v0
+Arjun Patel
+Mar 5, 2025
+Deep Dives
+Share:
+Looking for the right words
+Ever had that moment when you're struggling to remember something, and then suddenly—the perfect word or phrase pops into your head, unlocking a flood of memories?
+Just like how using the right words can help you remember what you need, sparse search focuses on precise keywords to return your relevant documents.
+Pinecone is excited to introduce pinecone-sparse-english-v0, our new proprietary sparse retrieval model that strikes the perfect balance between high-quality search results and the low latency required for production environments.
+In this article, we'll take you on a journey through the evolution of sparse models, from basic keyword matching to sophisticated retrieval models. Through this, we’ll discuss advancements and decisions that motivate the best-in-class performance of pinecone-sparse. By the end, you'll have a clear understanding of how to implement sparse retrieval in your own applications using Pinecone.
+In a hurry?
+Skip to the bottom for code samples and best practices to start using pinecone-sparse-english-v0 right away!
+Defining Sparse Retrieval
+In keyword search, you pass a string of keywords to a search bar, and you get a set of documents that overlap with the keywords you used within the query. This tends to be a pretty good estimate of how
+relevant
+those documents are to what you have looked for, and works great for situations where you need high alignment on proper nouns, technical terms, brands, serial numbers, etc.
+For example, you might ask:
+“How do I use Pinecone Assistant?”
+and get back articles titled:
+“Use Pinecone Assistant in your Project”.
+However,
+how often a word appears in a document doesn't reliably indicate its relevance to a specific query.
+Consider the word "data" as an example. This term appears frequently in technical documents about data visualization, data science, and data wrangling—but its relevance varies significantly depending on the context and the specific query.
+If someone searches for "data visualization techniques," documents containing many instances of "data wrangling" might be less relevant than those with fewer mentions but in a visualization context. This frequency-based approach fails to capture the semantic relationship between the query and the document content.
+So, we need some advanced way of dealing with words that are “low information” and “high information”.
+Generalizing the structure of information retrieval
+To better understand how to iterate on sparse retrieval, let’s describe the task at hand generally.
+We need the following:
+a way to transform input queries into vectors, or numerical representations of those words
+a way to transform input documents and a place to store them (in our case, a vector database)
+a way to score and return documents based on some estimate of relevance
+We can think of the scores on a word level as
+impact scores
+and the
+sum of the impact scores as a measure of relevance
+or importance to the incoming query. Our goal is to find the best way to calculate these scores and return the most relevant documents back to users.
+Now, if each query and document is represented by a vector whose length is the entire vocabulary, we’ll end up with a load of zeros in our representation.
+This is why sparse embeddings are called sparse since they tend to have a ton of null values. This is quite undesirable from a storage perspective, so these embeddings are typically stored within an
+inverted index
+, which maps tokens to the documents they appear in and their score.
+An example of how words are stored in an inverted index
+Now, the search mechanism is super easy! Find all the tokens from the query, their corresponding documents and scores, and return the ones that are scored the highest. This is way simpler than checking each document.
+Hold on, what about dense search?
+At this point, if you are already familiar with semantic search (and large language models), you might be scratching your head. Isn’t it better, you think, to implement dense search using an embedding model and avoid all this pesky optimization on sparse keywords and tokens and whatnot?
+To review, semantic search typically involves using an embedding model that transforms input text into fixed-size embeddings. The idea here is you measure similarity by looking at how close these vectors are in vector space.
+So, instead of calculating impact scores on a word level, and summing them to return relevant documents, we
+represent the whole query and document (or document piece) with a fixed-sized vector and directly calculate their distance in vector space.
+An example of how sentences cluster in vector space across languages
+There are a few subtle differences here:
+First, the vectors created by these embedding models are not directly interpretable, nor are they mappable to specific words or phrases like sparse embeddings are
+Second, these tend to be better at describing the entirety of the meaning of a query or document without a strong condition on the words being used
+Because of this, dense embeddings are great for when input queries may not overlap with document sets at all, such as when searching help manuals or code documentation as a new user, or for cross-lingual or multilingual applications, where traditional keyword search isn’t really possible.
+However, we lose this nice quality of high-precision results when the keywords entered in a document matter a lot. If you pass in short queries or queries of the titles of documents to a semantic search application that uses dense embeddings, you might not get the document you are looking for at all! However, most sparse embeddings will ensure that at least those tokens will appear in returned results.
+Most production implementations of semantic search will include some form of dense or sparse search to cover all possible queries.
+Coming back to sparse search, there are a few methodologies developed over the years that can make searching sparse embeddings more fruitful.
+A Brief History of Sparse Search
+TF-IDF
+Term Frequency Inverse Document Frequency is a methodology for doing a type of simple weighting of terms within documents
+Luckily, we can understand how TF-IDF works by literally interpreting the name for the formula!
+We measure how often a term occurs within a given document, related to how often it occurs across documents, and take the inverse of the latter. We take the inverse because a word should be less important the more often it occurs across documents.
+An explanation of the TF-IDF formula.
+The vectors that TF-IDF produces are more indicative of the important content within the documents than frequency alone, as unique words that occur frequently within a given document are weighted the most.
+BM25
+This brings us to the contemporary search algorithm most services implement: Best Match 25, aka BM25 or Okapi.
+The best way to think about BM25 is that it is an extension of TF-IDF with a few extra bits that help normalize documents based on length. Longer documents should not be more relevant than shorter ones just because they can contain matching words more often.
+Source:
+Semantic Search: Measuring Meaning From Jaccard to Bert
+Using BM25, we can find documents that overlap with our search queries. To learn exactly how these methods are related, check out our
+deep dive on keyword primitives here
+.
+Improving upon BM25
+BM25 doesn’t work well for some search workloads for the same reason it can be frustrating to learn a new idiom: the literal meaning of words can differ significantly from their contextual meaning!
+Consider the following cases:
+New users on a promising new codebase might not know what terms or phrases to use within documentation
+Customers seeking help in a FAQ section might not ask questions that neatly align with these documents
+Synonyms or Homonyms in queries. A bull market is not always where you buy cattle, after all!
+For this
+vocabulary mismatch problem
+, we need something better than BM25 to help us.
+Specifically, we’d need a better way of representing the words inside those vectors.
+It turns out, a great way to improve this relevance score is to use a little something called
+language models
+to learn the scoring of these words and tokens in the first place!
+In this method, we learn how important terms are within a document directly from some sort of training dataset and objective. It turns out that if you have enough data, you can learn how important words are within a document using large language model embeddings. We’ll go over the next wave of models that leverage this insight to do so.
+Enriching documents to better align with queries (DocT5Query)
+What if we added possible relevant queries to documents at upsert time? This way, we could increase the probability that any given document would align with a future query… by just appending a set of queries to that document directly!
+This is called
+document expansion
+and is exactly what
+the DocT5Query approach
+does. The language model T5 generates queries that
+could be answered by a given document
+and appends them to those documents.
+Now, as long as you ask something that overlaps with those queries, we can easily find those documents.
+Document expansion takes input documents, uses a model to generate possible queries, and appends them back to the document for indexing.
+However, this has a few drawbacks. Queries could change over time as an application is deployed, necessitating model fine-tuning and database updates. The documents themselves need to be expanded during embedding and upsert, which adds significant latency to loading data.
+Finally, the generated queries can be hallucinated, just like with any other LLM task, which can risk incorrect documents aligning to queries.
+Contextualized Sparse Retrieval (DeepImpact)
+Expanding documents with queries is great, but if we don't have a good measure of relevance for those new terms, we won't better match future queries.
+To address this, we need a way to directly influence what each term means within queries when searching for relevant documents. After all, different queries convey different meanings, especially when word order and ambiguous terms are involved.
+Methods like
+DeepImpact
+take document expansion (and DocT5Query) a step further by learning and applying contextualization to each weight to each token within the document.
+The DeepImpact architecture consists of two key parts:
+a contextual LM encoder
+and
+an impact score encoder
+.
+Expanded document tokens are passed through a custom-trained LM encoder, which outputs embeddings for each processed token.
+Then, a unique set of these tokens is passed to the score encoder, which produces those impact score weights.
+DeepImpact expands documents and processes them through a custom model for scoring within an inverted index.
+When we conduct the search, we look for all documents that contain words within the query, and sum their impact scores to obtain the final relevance scores.
+Inputs are tokenized, score document pairs are collected and summed based on overlap, and highest scoring documents are returned.
+It’s important to note that part of DeepImpact's novelty is that the entire model is trained end to end to optimize these final relevance scores, which means the weights are instead learned measures of their impact.
+That first step sounds familiar, doesn't it? It’s a lot like a dense embedding model!
+The key difference is that for dense search, these embeddings are pooled to represent the input query or document entirely, and for this sparse search, we learn how to weigh terms for importance during training.
+This is great, as we can now differentiate between documents that discuss the same thing in different contexts. Fun fact: Pinecone’s very own senior research scientist, Antonio Mallia, worked on DeepImpact!
+Modifying Queries for Better Search (SPLADE)
+What if instead of just enriching the documents, we enrich the incoming queries as well? This is precisely what the Sparse Lexical And Expansion model (
+SPLADE
+) does!
+Source:
+SPLADE for Sparse Vector Search Explained
+By putting expansion in the query, we can contextualize our search based on inputs to the database. Sparse search proceeds as expected, where a model is trained to learn query and document expansion and scored based on the importance/overlap of terms within queries and documents.
+However, this puts a lot of pressure on the quality of the generated queries and documents and, of course, introduces latency and maintenance issues on both ends. It’s no surprise that SPLADE and its variants are among the most latent sparse models.
+A Better Sparse Model: pinecone-sparse-english-v0
+Pinecone-sparse-english-v0 builds on the innovations of the previous models described above, including DeepImpact itself. Pinecone sparse can be considered a production-optimized version of a model called DeeperImpact, with an eye toward low latent responses for workloads and alignment with query behaviors for users.
+DeeperImpact
+After DeepImpact, the authors of
+DeeperImpact
+implemented some updates to recreate the model using advancements made since the publication.
+These updates focused on improving the contextual LM encoder, changing the tokenization method, applying a more powerful, finetuned model for document expansion, and some training adjustments.
+Whole Word Tokenization
+Typically, sparse models like SPLADE break down queries into subword tokens. These are easier to manage as databases scale since you can use a lot of common tokens to represent all sorts of words. If you have just enough tokens, you can represent almost any possible incoming query.
+However, this comes at the cost of retrieval accuracy. There’s a chance that these trained tokenizers don’t generalize well to a given company’s dataset, especially ones from terminology-heavy domains like finance, medical, and legal applications. In these cases, it’s actually better to sacrifice the flexibility of subword tokenization and use the words directly.
+This enables you to do high-precision searches just like you’d do with keyword searches, as you know that these words will appear in the results returned. And, since contextual weighting still occurs, you gain the benefit of models like SPLADE that inform the meaning of these words within their contexts without burning the ingestion inference cost.
+And, you can do things like search over part numbers, financial symbols, and other forms of words that really, really need to appear in your results without concern.
+Model Architecture Swaps and Training
+Key components for the LM Encoder
+CoCondenser is a pretraining methodology
+that creates more performant embeddings for search, tasks, and provides a stronger starting point than BERT.
+In addition to using CoCondenser embeddings, pinecone-sparse utilizes true hard negatives on retrieval tasks to better shape embeddings learned, and distillation from a teacher model to further better estimate relevance. By choosing more powerful representations of the word embeddings, and then tuning them more precisely using these training steps allows for better retrieval performance.
+Document expansions using a more powerful model
+Key components for finetuning Llama 2 for document expansion
+Unlike SPLADE, DeeperImpact does not perform any sort of query expansion. This is great for latency purposes as queries will be just as fast as any other model-free method.
+DeeperImpact maintains the use of document expansions, which, like in DocT5Query, add possible queries to the body of documents ingested.
+Unlike DocT5Query, DeeperImpact finetunes an instance of the Llama 2 model to predict possible queries given a document set. Llama 2 is an LLM released by Meta, which was lauded during launch for being a powerful open-source language model and with more parameters than T5.
+The better we can predict queries that could be relevant to a given document, the more we can mitigate the vocabulary mismatch problem.
+Architecture of Pinecone Sparse
+The architecture of pinecone-sparse is based on DeeperImpact, with the exception of document expansion.
+So, the final architecture looks something like this:
+A high level overview of pinecone-sparse-english-v0
+Removing document expansion allows for maintaining extremely fast index creation and upsertion, while preserving the rest of the advantages of DeeperImpact.
+And, there’s no risk from hallucinated queries either. This is fantastic for production applications of sparse search that need the higher quality created by using pinecone-sparse, but don’t want to sacrifice on latency.
+Using pinecone-sparse-english-v0
+Using Pinecone Sparse via
+integrated inference
+is really easy. Here’s all the code necessary for making an index and upserting embeddings:
+if not pc.has_index(sparse_index_name):
+index_model = pc.create_index_for_model(
+name=sparse_index_name,
+cloud="aws",
+region="us-east-1",
+embed={
+"model":"pinecone-sparse-english-v0",
+"field_map":{"text": "chunk_text"}
+}
+)
+# Add your Record Formatted data here
+records = []
+#embed and upsert in one line
+index.upsert_records(records=records, namespace=namespace)
+# query with one line too!
+sparse_index = pc.Index(sparse_index_name)
+results = sparse_index.search_records(
+namespace=namespace,
+query={
+"inputs": {"text": query},
+"top_k": 5,
+},
+fields=[""chunk_text"]
+)
+Best practices for using pinecone-sparse-english-v0
+Sparse models are great for:
+searching over terminology-heavy domains where subword tokenization can pose a problem, such as medical, legal, and financial domains
+queries that need precise entity matching, such as over proper nouns, names, part numbers, stock tickers, products etc that are difficult to put into metadata
+And for using pinecone-sparse-english-v0, remember to:
+chunk your data as you would with any dense model, taking care to stay within
+key parameters
+such as a token (word) limit of 512 per input and 96 inputs per batch
+remember that it works for English documents only for now
+pass “query” or “passage” as the
+input_type
+if using directly via Pinecone Inference for queries and documents, respectively
+learn
+about sparse indexes here
+if you wish to use them directly or with other sparse methods
+and experiment with implementing both sparse, dense, and reranking using
+cascading retrieval
+to truly maximize your search result relevance
+Recap
+In summary, sparse retrieval models enhance traditional keyword searches by adding contextual understanding and semantic weights. Pinecone-sparse delivers high-precision retrieval with minimal latency overhead, making it ideal for specialized domains and entity-rich content.
+Try it today, and let us know what you build with it!

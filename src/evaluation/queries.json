@@ -6,7 +6,8 @@
       "hnsw_1",
       "hnsw_2",
       "hnsw_4",
-      "hnsw_5"
+      "hnsw_5",
+      "vector_database_6"
     ]
   },
   {

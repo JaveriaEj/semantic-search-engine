@@ -24,6 +24,26 @@ ARTICLES = [
         "name": "embedding_models",
         "url": "https://www.pinecone.io/learn/series/rag/embedding-models-rundown/",
     },
+    {
+        "name": "bm25",
+        "url": "https://www.pinecone.io/learn/learn-pinecone-sparse/",
+    },
+    {
+        "name": "vector_database",
+        "url": "https://www.pinecone.io/learn/vector-database/",
+    },
+    {
+        "name": "chunking",
+        "url": "https://www.pinecone.io/learn/chunking-strategies/",
+    },
+    {
+        "name": "reranking",
+        "url": "https://docs.pinecone.io/guides/search/rerank-results",
+    },
+    {
+        "name": "vector_similarity",
+        "url": "https://www.pinecone.io/learn/vector-similarity/",
+    },
 ]
 
 OUTPUT_DIR = "data/raw"
